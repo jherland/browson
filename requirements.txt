@@ -1,0 +1,5 @@
+blessed
+
+pytest
+black
+flake8

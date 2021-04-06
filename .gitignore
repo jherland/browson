@@ -1,0 +1,4 @@
+# Python
+/.pypy/
+/.venv*/
+__pycache__/

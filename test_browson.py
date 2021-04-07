@@ -15,11 +15,13 @@ class Test_render_nodes_python:
 
     def test_leaf_node(self):
         n = Node.build("foo")
-        assert "\n".join(render_nodes(n, self.style)) == repr("foo")
+        lines, _ = zip(*render_nodes(n, self.style))
+        assert "\n".join(lines) == repr("foo")
 
     def test_simple_list(self):
         n = Node.build(["foo", 123, True])
-        assert "\n".join(render_nodes(n, self.style)) == textwrap.dedent(
+        lines, _ = zip(*render_nodes(n, self.style))
+        assert "\n".join(lines) == textwrap.dedent(
             """\
             [
                 'foo',
@@ -30,7 +32,8 @@ class Test_render_nodes_python:
 
     def test_simple_dict(self):
         n = Node.build({"foo": 123, "bar": 456, "baz": 789})
-        assert "\n".join(render_nodes(n, self.style)) == textwrap.dedent(
+        lines, _ = zip(*render_nodes(n, self.style))
+        assert "\n".join(lines) == textwrap.dedent(
             """\
             {
                 'foo': 123,
@@ -41,7 +44,8 @@ class Test_render_nodes_python:
 
     def test_nested_dict(self):
         n = Node.build({"foo": {"a": 1, "b": 2}, "bar": {"c": 3, "d": 4}})
-        assert "\n".join(render_nodes(n, self.style)) == textwrap.dedent(
+        lines, _ = zip(*render_nodes(n, self.style))
+        assert "\n".join(lines) == textwrap.dedent(
             """\
             {
                 'foo': {
@@ -61,11 +65,13 @@ class Test_render_nodes_json:
 
     def test_leaf_node(self):
         n = Node.build("foo")
-        assert "\n".join(render_nodes(n, self.style)) == '"foo"'
+        lines, _ = zip(*render_nodes(n, self.style))
+        assert "\n".join(lines) == '"foo"'
 
     def test_simple_list(self):
         n = Node.build(["foo", 123, True, False, None])
-        assert "\n".join(render_nodes(n, self.style)) == textwrap.dedent(
+        lines, _ = zip(*render_nodes(n, self.style))
+        assert "\n".join(lines) == textwrap.dedent(
             """\
             [
               "foo",
@@ -78,7 +84,8 @@ class Test_render_nodes_json:
 
     def test_simple_dict(self):
         n = Node.build({"foo": 123, "bar": 456, "baz": 789})
-        assert "\n".join(render_nodes(n, self.style)) == textwrap.dedent(
+        lines, _ = zip(*render_nodes(n, self.style))
+        assert "\n".join(lines) == textwrap.dedent(
             """\
             {
               "foo": 123,
@@ -89,7 +96,8 @@ class Test_render_nodes_json:
 
     def test_nested_dict(self):
         n = Node.build({"foo": {"a": 1, "b": 2}, "bar": {"c": 3, "d": 4}})
-        assert "\n".join(render_nodes(n, self.style)) == textwrap.dedent(
+        lines, _ = zip(*render_nodes(n, self.style))
+        assert "\n".join(lines) == textwrap.dedent(
             """\
             {
               "foo": {

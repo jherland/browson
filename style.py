@@ -27,11 +27,14 @@ class Style:
     def close(self, node):
         return self.brackets(node)[2]
 
-    def format_value(self, value):
+    def format_value(self, node):
         raise NotImplementedError
 
-    def format_key_value(self, key, formatted_value):
-        return self.format_value(key) + self.kv_sep + formatted_value
+    def format_key(self, node):
+        raise NotImplementedError
+
+    def combine_key_value(self, node, formatted_key, formatted_value):
+        return formatted_key + self.kv_sep + formatted_value
 
     def terminator(self, is_last):
         raise NotImplementedError
@@ -52,11 +55,11 @@ class PythonStyle(Style):
         None: ("??", "<", ">"),  # default fallback
     }
 
-    def indent(self, level):
-        return "    " * level
+    def format_value(self, node):
+        return repr(node.value)
 
-    def format_value(self, value):
-        return repr(value)
+    def format_key(self, node):
+        return repr(node.key)
 
     def terminator(self, is_last):
         return ","
@@ -72,30 +75,58 @@ class JSONStyle(Style):
         None: ("??", "<", ">"),  # default fallback
     }
 
-    def indent(self, level):
-        return "  " * level
+    def format_value(self, node):
+        return json.dumps(node.value)
 
-    def format_value(self, value):
-        return json.dumps(value)
+    def format_key(self, node):
+        return json.dumps(node.key)
 
     def terminator(self, is_last):
         return "" if is_last else ","
 
 
 class Colorizer(Style):
+    Schemes = {  # {scheme_name: {node.kind: color_name_or_rgb_tuple}}
+        "jq": {  # from the `jq` commandline JSON processor
+            "indent": "bright_white",
+            "brackets": "bright_white",  # empty/open/close brackets
+            "kv_sep": "bright_white",
+            "terminator": "bright_white",
+            "key": "bright_blue",  # dict keys
+            str: "green",
+            type(None): "bright_black",
+            None: "white",  # default
+        },
+        "Dark+": {  # from the Dark+ VSCode theme
+            "indent": (212, 212, 212),
+            "brackets": (212, 212, 212),  # empty/open/close brackets
+            "kv_sep": (212, 212, 212),
+            "terminator": (212, 212, 212),
+            "key": (156, 220, 254),  # dict keys
+            str: (206, 145, 120),
+            type(None): (86, 156, 214),
+            bool: (86, 156, 214),
+            int: (181, 206, 168),
+            float: (181, 206, 168),
+            None: (212, 212, 212),  # default
+        },
+    }
+
     def __init__(self, **kwargs):
         self.term = kwargs["term"]
-        self.colors = {  # map node.kind -> self.term method
-            "key": self.term.bright_blue,  # dict keys
-            "brackets": self.term.bright_white,  # empty/open/close brackets
-            "kv_sep": self.term.bright_white,
-            "terminator": self.term.bright_white,
-            str: self.term.green,
-            type(None): self.term.bright_black,
-            None: self.term.white,  # default
-        }
+        self.colors = self._prepare_scheme(kwargs.get("scheme", "jq"))
         super().__init__(**kwargs)
+        self.indent = self._color("indent")(self.indent)
         self.kv_sep = self._color("kv_sep")(self.kv_sep)
+
+    def _prepare_scheme(self, scheme):
+        def color_func(color):
+            if isinstance(color, str):  # color name
+                return self.term.formatter(color)
+            else:  # (r,g,b) tuple
+                return self.term.color(self.term.rgb_downconvert(*color))
+
+        return {k: color_func(v) for k, v in self.Schemes[scheme].items()}
 
     def _color(self, kind):
         return self.colors.get(kind, self.colors[None])
@@ -104,15 +135,11 @@ class Colorizer(Style):
         color = self._color("brackets")
         return tuple(color(s) for s in super().brackets(node))
 
-    def format_value(self, value):
-        return self._color(type(value))(super().format_value(value))
+    def format_value(self, node):
+        return self._color(node.kind)(super().format_value(node))
 
-    def format_key_value(self, key, formatted_value):
-        return (
-            self._color("key")(super().format_value(key))
-            + self.kv_sep
-            + formatted_value
-        )
+    def format_key(self, node):
+        return self._color("key")(super().format_key(node))
 
     def terminator(self, is_last):
         return self._color("terminator")(super().terminator(is_last))
@@ -132,7 +159,7 @@ class LineWrapper(Style):
             if self.wrap:
                 with suppress(KeyError):
                     prefix += " " * self.term.length(
-                        self.format_key_value(node.key, "")
+                        self.combine_key_value(node, self.format_key(node), "")
                     )
                 lines = self.term.wrap(ret, subsequent_indent=prefix)
                 ret = "\n".join(lines)

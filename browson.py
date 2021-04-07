@@ -10,7 +10,7 @@ from time import monotonic as now
 from blessed import Terminal
 
 from node import Node
-from style import PythonStyle, JSONStyle, Colorizer, LineWrapper
+import style
 
 logger = logging.getLogger("browson")
 
@@ -40,22 +40,22 @@ def render_nodes(root, style):
             # Prepare prefixes and suffixes for children (incl. postvisit)
             prefixes = prefixes_for_children(n, prefix) + [prefix] + prefixes
             suffixes = suffixes_for_children(n) + [suffix] + suffixes
-            suffix = ""  # no suffix after "{"", deferred to after matching "}"
+            suffix = ""  # no suffix after "{", deferred to after matching "}"
         elif n.children() is not None:  # empty internal node
             s = style.empty(n)
         else:  # leaf node
-            s = style.format_value(n.value)
+            s = style.format_value(n)
 
         with suppress(KeyError):
-            s = style.format_key_value(n.key, s)
-        yield style.format_line(prefix, s, suffix, n)
+            s = style.combine_key_value(n, style.format_key(n), s)
+        yield style.format_line(prefix, s, suffix, n), n
 
     def postvisit(n):
         if n.children():  # internal node
             prefix = prefixes.pop(0)
             suffix = suffixes.pop(0)
             s = style.close(n)
-            yield style.format_line(prefix, s, suffix, n)
+            yield style.format_line(prefix, s, suffix, n), n
 
     yield from root.dfwalk(previsit, postvisit)
 
@@ -106,6 +106,7 @@ class UI:
 
         # Main UI state variables
         self.lines = []  # from self.render()
+        self.nodes = []  # Node objects corresponding to self.lines
         self.focus = 1  # which line is currently focused (numbered from 1)
         self.viewport = (1, 1)  # line span currently visible
 
@@ -193,8 +194,9 @@ class UI:
 
     def status(self):
         if self._status is None:  # use default
-            return self.term.rjust(
-                f"- ({self.focus}/{len(self.lines)} lines) -"
+            node = self.nodes[self.focus - 1]
+            return self.term.ljust(
+                f"{node.name} - ({self.focus}/{len(self.lines)} lines) -"
             )
         else:
             return self._status
@@ -204,11 +206,15 @@ class UI:
 
     def draw_status(self):
         with self.term.location(0, self.term.height - 1):
-            print(self.highlight_line(self.status(), "reverse"), end="", flush=True)
+            print(
+                self.highlight_line(self.status(), "reverse"),
+                end="",
+                flush=True,
+            )
 
     @debug_time
     def render(self):
-        self.lines = list(render_nodes(self.root, self.style))
+        self.lines, self.nodes = zip(*render_nodes(self.root, self.style))
         assert all("\n" not in line for line in self.lines)
         self.adjust_viewport()
         self._need_render = False
@@ -246,11 +252,18 @@ class UI:
         logger.info("Bye!")
 
 
-class MyStyle(LineWrapper, Colorizer, JSONStyle):
+class MyStyle(style.LineWrapper, style.Colorizer, style.JSONStyle):
     pass
 
 
 # TODO:
+# - move render_nodes into style.py
+# - move UI into separate module
+# - decouple line wrapping from styles.
+#   - styles are applied at render time
+#   - wrapping is applied at draw time
+# - render both multiline/nested and oneline/compact node representations
+#   - allow actions to switch between multiline and oneline with quick redraw
 # - help window with keymap
 # - navigate to matching bracket/parent/sibling
 # - search

@@ -6,25 +6,36 @@ class Node:
         return not isinstance(obj, (dict, list, tuple, set))
 
     @classmethod
-    def build(cls, obj, name="", **kwargs):
+    def build(cls, obj, name="", level=0, **kwargs):
         if cls.is_scalar(obj):
-            return cls(name, type(obj), obj, **kwargs)
+            return cls(name, type(obj), obj, level=level, **kwargs)
         else:
+            child_args = dict(level=level + 1, is_child=True)
             if isinstance(obj, dict):
                 children = [
-                    cls.build(v, f"{name}.{k}", key=k) for k, v in obj.items()
+                    cls.build(v, f"{name}.{k}", key=k, **child_args)
+                    for k, v in obj.items()
                 ]
             else:
                 children = [
-                    cls.build(v, f"{name}[{i}]") for i, v in enumerate(obj)
+                    cls.build(v, f"{name}[{i}]", **child_args)
+                    for i, v in enumerate(obj)
                 ]
-            return cls(name, type(obj), obj, children=children, **kwargs)
+            if children:
+                children[0]["is_first_child"] = True
+                children[-1]["is_last_child"] = True
+            return cls(
+                name, type(obj), obj, level=level, children=children, **kwargs
+            )
 
     def __init__(self, name, kind, value, **kwargs):
         self.name = name
         self.kind = kind
         self.value = value
         self.extra = kwargs
+
+    def __contains__(self, key):
+        return key in self.extra
 
     def get(self, key, default=None):
         return self.extra.get(key, default)
@@ -43,6 +54,12 @@ class Node:
         """Dict items have a key associated with their value."""
         return self["key"]
 
+    @property
+    def is_leaf(self):
+        """Return True iff this node does not have any children."""
+        return "children" not in self.extra
+
+    # TODO: @property
     def children(self, default=None):
         """Internal nodes (aka. collections) have children nodes."""
         return self.get("children", default)
@@ -61,7 +78,6 @@ class Node:
         assert isinstance(other, Node), repr(other)
         result = self.name == other.name and self.value == other.value
         assert self.kind is other.kind
-        assert self.extra == other.extra
         return result
 
     def yield_node(node):

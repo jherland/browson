@@ -15,51 +15,6 @@ import style
 logger = logging.getLogger("browson")
 
 
-def render_nodes(root, style):
-    prefixes = [""]
-    suffixes = [""]
-
-    def prefixes_for_children(n, prefix):
-        assert n.children()
-        return [prefix + style.indent] * len(n.children(()))
-
-    def suffixes_for_children(n):
-        children = n.children()
-        assert children
-        return [
-            style.terminator(i == len(children))
-            for i, _ in enumerate(children, 1)
-        ]
-
-    def previsit(n):
-        nonlocal prefixes, suffixes
-        prefix = prefixes.pop(0)
-        suffix = suffixes.pop(0)
-        if n.children():  # internal node
-            s = style.open(n)
-            # Prepare prefixes and suffixes for children (incl. postvisit)
-            prefixes = prefixes_for_children(n, prefix) + [prefix] + prefixes
-            suffixes = suffixes_for_children(n) + [suffix] + suffixes
-            suffix = ""  # no suffix after "{", deferred to after matching "}"
-        elif n.children() is not None:  # empty internal node
-            s = style.empty(n)
-        else:  # leaf node
-            s = style.format_value(n)
-
-        with suppress(KeyError):
-            s = style.combine_key_value(n, style.format_key(n), s)
-        yield style.format_line(prefix, s, suffix, n), n
-
-    def postvisit(n):
-        if n.children():  # internal node
-            prefix = prefixes.pop(0)
-            suffix = suffixes.pop(0)
-            s = style.close(n)
-            yield style.format_line(prefix, s, suffix, n), n
-
-    yield from root.dfwalk(previsit, postvisit)
-
-
 def clamp(val, minimum, maximum):
     assert maximum >= minimum
     return minimum if val < minimum else maximum if val > maximum else val
@@ -214,7 +169,9 @@ class UI:
 
     @debug_time
     def render(self):
-        self.lines, self.nodes = zip(*render_nodes(self.root, self.style))
+        self.lines, self.nodes = zip(
+            *style.render_nodes(self.root, self.style)
+        )
         assert all("\n" not in line for line in self.lines)
         self.adjust_viewport()
         self._need_render = False
@@ -252,12 +209,37 @@ class UI:
         logger.info("Bye!")
 
 
-class MyStyle(style.LineWrapper, style.Colorizer, style.JSONStyle):
+# TODO: Move this out of the Style hierarchy and into the UI class.
+# Line wrapping should be done at draw time, not at render time
+class LineWrapper(style.Style):
+    def __init__(self, **kwargs):
+        self.term = kwargs["term"]
+        self.enabled = kwargs.get("enabled", self.term.does_styling)
+        self.wrap = kwargs.get("wrap", False)  # default to truncated lines
+        super().__init__(**kwargs)
+
+    def format_line(self, prefix, text, suffix, node):
+        ret = super().format_line(prefix, text, suffix, node)
+        width = self.term.width
+        if self.term.length(ret) > width and self.enabled:
+            if self.wrap:
+                with suppress(KeyError):
+                    prefix += " " * self.term.length(
+                        self.combine_key_value(node, self.format_key(node), "")
+                    )
+                lines = self.term.wrap(ret, subsequent_indent=prefix)
+                ret = "\n".join(lines)
+            else:  # truncate
+                lines = self.term.wrap(ret, width=self.term.width - 1)
+                ret = lines[0] + self.term.reverse("̇̇̇…")
+        return ret
+
+
+class MyStyle(style.Colorizer, style.JSONStyle):
     pass
 
 
 # TODO:
-# - move render_nodes into style.py
 # - move UI into separate module
 # - decouple line wrapping from styles.
 #   - styles are applied at render time

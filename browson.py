@@ -62,8 +62,8 @@ class UI:
         # Main UI state variables
         self.lines = []  # from self.render()
         self.nodes = []  # Node objects corresponding to self.lines
-        self.focus = 1  # which line is currently focused (numbered from 1)
-        self.viewport = (1, 1)  # line span currently visible
+        self.focus = 0  # currently focused/selected index in .lines/.nodes
+        self.viewport = (0, 0)  # line span currently visible
 
         # Misc. state/communication variables
         self._need_render = True  # must rerender all lines from scratch
@@ -75,14 +75,14 @@ class UI:
     # Actions triggered from input
 
     def set_focus(self, line):
-        self.focus = clamp(line, 1, len(self.lines))
+        self.focus = clamp(line, 0, len(self.lines) - 1)
         self.adjust_viewport()
 
     def move_focus(self, relative):
         return self.set_focus(self.focus + relative)
 
     def collapse(self):
-        node = self.nodes[self.focus - 1]
+        node = self.nodes[self.focus]
         if node.collapsed:
             return  # already collapsed
         node.collapsed = True
@@ -91,17 +91,17 @@ class UI:
         lines, nodes = map(list, zip(*style.draw_nodes(node)))
         self.nodes[start : end + 1] = nodes
         self.lines[start : end + 1] = lines
-        self.focus = start + 1
+        self.focus = start
         self.adjust_viewport()
 
     def expand(self):
-        node = self.nodes[self.focus - 1]
+        node = self.nodes[self.focus]
         if not node.collapsed:
             return  # already expanded
         node.collapsed = False
         lines, nodes = map(list, zip(*style.draw_nodes(node)))
-        self.nodes[self.focus - 1 : self.focus] = nodes
-        self.lines[self.focus - 1 : self.focus] = lines
+        self.nodes[self.focus : self.focus + 1] = nodes
+        self.lines[self.focus : self.focus + 1] = lines
         self.adjust_viewport()
 
     def on_resize(self):
@@ -137,8 +137,8 @@ class UI:
             "KEY_SDOWN": partial(self.move_focus, 5),
             "KEY_PGUP": partial(self.move_focus, -(self.term.height - 3)),
             "KEY_PGDOWN": partial(self.move_focus, self.term.height - 3),
-            "KEY_HOME": partial(self.set_focus, 1),
-            "KEY_END": partial(self.set_focus, len(self.lines)),
+            "KEY_HOME": partial(self.set_focus, 0),
+            "KEY_END": partial(self.set_focus, len(self.lines) - 1),
             # collapse/expand
             "KEY_LEFT": self.collapse,
             "KEY_RIGHT": self.expand,
@@ -168,16 +168,16 @@ class UI:
         elif self.focus > start + height:  # scroll viewport down
             start = self.focus + self.context_lines - height
         # Keep viewport within rendered lines
-        start = max(1, min(len(self.lines), start + height) - height)
+        start = max(0, min(len(self.lines) - 1, start + height) - height)
 
         self.viewport = (start, start + height)
         self._need_draw = True
 
     def status(self):
         if self._status is None:  # use default
-            node = self.nodes[self.focus - 1]
+            node = self.nodes[self.focus]
             return self.term.ljust(
-                f"{node.name} - ({self.focus}/{len(self.lines)} lines) -"
+                f"{node.name} - ({self.focus + 1}/{len(self.lines)} lines) -"
             )
         else:
             return self._status
@@ -206,7 +206,7 @@ class UI:
     def draw(self):
         print(self.term.home + self.term.clear, end="")
         start, end = self.viewport
-        for n, line in enumerate(self.lines[start - 1 : end], start):
+        for n, line in enumerate(self.lines[start : end + 1], start):
             if n == self.focus:
                 line = self.highlight_line(line)
             print(line)

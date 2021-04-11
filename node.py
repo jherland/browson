@@ -42,7 +42,6 @@ class Node:
         self.value: Any = value
         self.parent: "Optional[Node]" = None
         self._children: "Optional[List[Node]]" = None
-        self.collapsed: bool = False
         self.__dict__.update(kwargs)
 
     def __str__(self):

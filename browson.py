@@ -1,50 +1,17 @@
 #!/usr/bin/env python3
-from contextlib import contextmanager, suppress
-from functools import partial, wraps
+from contextlib import suppress
+from functools import partial
 import json
 import logging
 import signal
 import sys
-from time import monotonic as now
 
 from blessed import Terminal
 
-from node import Node
 import style
+from utils import clamp, debug_time, signal_handler
 
 logger = logging.getLogger("browson")
-
-
-def clamp(val, minimum, maximum):
-    assert maximum >= minimum
-    return minimum if val < minimum else maximum if val > maximum else val
-
-
-def debug_time(f):
-    @wraps(f)
-    def wrapper(*args, **kwargs):
-        try:
-            t = now()
-            return f(*args, **kwargs)
-        finally:
-            logger.debug(f"{f.__name__} took {now() - t}s")
-
-    return wrapper
-
-
-@contextmanager
-def signal_handler(signalnum, handler):
-    """Install the given signal handler for the duration of this context."""
-
-    def wrapped_handler(signum, frame):
-        logger.debug(f"signal handler invoked with {signum}, {frame}")
-        handler()
-
-    prev = signal.signal(signalnum, wrapped_handler)
-    try:
-        yield
-    finally:
-        signal.signal(signalnum, prev)
 
 
 class ResizeEvent(Exception):
@@ -58,6 +25,7 @@ class UI:
         self.root = root
         self.term = term
         self.style_class = style_class
+        self.style = style_class(term=self.term)
 
         # Main UI state variables
         self.lines = []  # from self.render()
@@ -66,11 +34,12 @@ class UI:
         self.viewport = (0, 0)  # line span currently visible
 
         # Misc. state/communication variables
-        self._need_render = True  # must rerender all lines from scratch
         self._need_draw = True  # must redraw current viewport
         self._quit = False  # time to quit
         self._status = None  # custom status line
         self._timeout = None  # used to reset status line
+
+        self.adjust_viewport()
 
     # Actions triggered from input
 
@@ -88,31 +57,33 @@ class UI:
         node.collapsed = True
         nodelines = [i for i, n in enumerate(self.nodes) if n is node]
         start, end = nodelines[0], nodelines[-1]
-        lines, nodes = map(list, zip(*style.draw_nodes(node)))
+        lines, nodes = map(list, zip(*node.draw(self.style)))
         self.nodes[start : end + 1] = nodes
         self.lines[start : end + 1] = lines
-        self.focus = start
-        self.adjust_viewport()
+        self.set_focus(start)
 
     def expand(self):
         node = self.nodes[self.focus]
         if not node.collapsed:
             return  # already expanded
         node.collapsed = False
-        lines, nodes = map(list, zip(*style.draw_nodes(node)))
+        lines, nodes = map(list, zip(*node.draw(self.style)))
         self.nodes[self.focus : self.focus + 1] = nodes
         self.lines[self.focus : self.focus + 1] = lines
-        self.adjust_viewport()
-
-    def on_resize(self):
-        self._need_render = True
-        raise ResizeEvent()  # trigger exit from keyboard polling
-
-    def rerender(self):
-        self._need_render = True
+        # self.focus does not change
+        self.redraw()
 
     def redraw(self):
         self._need_draw = True
+
+    def rerender(self):
+        self.root.invalidate(recurse=True)
+        self.redraw()
+
+    def on_resize(self):
+        self.style.on_resize()
+        self.rerender()
+        raise ResizeEvent()  # trigger exit from keyboard polling
 
     def quit(self):
         self._quit = True
@@ -194,18 +165,11 @@ class UI:
             )
 
     @debug_time
-    def render(self):
-        my_style = self.style_class(term=self.term)
-        self.lines, self.nodes = map(
-            list, zip(*style.render_nodes(self.root, my_style))
-        )
-        self.adjust_viewport()
-        self._need_render = False
-
-    @debug_time
     def draw(self):
         print(self.term.home + self.term.clear, end="")
         start, end = self.viewport
+        # FIXME:
+        self.lines, self.nodes = map(list, zip(*self.root.draw(self.style)))
         for n, line in enumerate(self.lines[start : end + 1], start):
             if n == self.focus:
                 line = self.highlight_line(line)
@@ -214,8 +178,8 @@ class UI:
         self._need_draw = False
 
     def dump(self):
-        self.render()
-        print("\n".join(self.lines))
+        for line, _ in self.root.draw(self.style):
+            print(line)
 
     def run(self):
         term = self.term
@@ -223,8 +187,6 @@ class UI:
             with signal_handler(signal.SIGWINCH, self.on_resize):
                 while not self._quit:
                     with suppress(ResizeEvent):
-                        if self._need_render:
-                            self.render()
                         if self._need_draw:
                             self.draw()
                         keystroke = term.inkey(timeout=self._timeout)
@@ -264,7 +226,7 @@ def main():
     with open(sys.argv[1], "rb") as f:
         data = json.load(f)
     logger.info("Building nodes...")
-    root = Node.build(data)
+    root = style.DrawableNode.build(data)
 
     logger.info("Running app...")
     term = Terminal()

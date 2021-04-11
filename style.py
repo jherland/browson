@@ -1,6 +1,6 @@
 from collections import ChainMap
 import json
-from typing import Iterator, List, Tuple
+from typing import Iterator, List, Optional, Tuple
 
 from node import Node
 
@@ -21,20 +21,50 @@ from node import Node
 #       - a list of lines to be shown after its children
 
 
+class DrawableNode(Node):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.collapsed: bool = False
+        self.compact: Optional[str] = None
+        self.full: Optional[Tuple[List[str], List[str]]] = None
+
+    def invalidate(self, recurse=False) -> None:
+        self.compact = None
+        self.full = None
+        if recurse:
+            for child in self.children:
+                child.invalidate(recurse)
+
+    def draw(self, style: "Style") -> Iterator[Tuple[str, Node]]:
+        if self.collapsed:
+            if self.compact is None:
+                self.compact = style.compact(self)
+                assert "\n" not in self.compact
+            yield self.compact, self
+        else:
+            if self.full is None:
+                self.full = style.full(self)
+                assert all("\n" not in line for p in self.full for line in p)
+            pre, post = self.full
+            yield from [(line, self) for line in pre]
+            for child in self.children:
+                yield from child.draw(style)
+            yield from [(line, self) for line in post]
+
+
 class Style:
     """API for styling the GUI representation of a Node tree.
 
     This is used to pre-render the compact + full representations of each
-    Node instance in a tree of Nodes. A complete rendering of a Node and its
-    children/subtree is performed by passing it to .render(). This will
-    annotate the Node object with "compact", "full_pre", and "full_post"
-    items (that are used to draw both the compact and full/expanded views of
-    this Node) as well as passing all its children nodes to .render as well.
-    Thus a complete rendering of the Node tree is performed by passing the
-    root Node to the appropriate Style instance.
+    DrawableNode instance in a tree of such nodes. The rendering is done
+    on-demand from DrawableNode.draw().
     """
 
     def __init__(self, **kwargs):
+        pass
+
+    def on_resize(self):
+        """This is called when the terminal size changes."""
         pass
 
     def compact(self, node: Node) -> str:
@@ -49,22 +79,6 @@ class Style:
         to display following the node's children.
         """
         raise NotImplementedError
-
-    def render(self, node: Node) -> None:
-        """Annotate this Node and its children with rendered data.
-
-        Set the .compact, .full_pre, and .full_post attributes on the given
-        Node object and all its children.
-        """
-        node.compact = self.compact(node)
-        node.full_pre, node.full_post = self.full(node)
-
-        assert "\n" not in node.compact
-        assert all("\n" not in line for line in node.full_pre)
-        assert all("\n" not in line for line in node.full_post)
-
-        for child in node.children:
-            self.render(child)
 
 
 class CodeLikeStyle(Style):
@@ -274,6 +288,10 @@ class TruncateLines(Style):
         self.width = self.term.width
         super().__init__(**kwargs)
 
+    def on_resize(self):
+        super().on_resize
+        self.width = self.term.width
+
     def _trunc_index(self, seqs, target_length):
         length = self.term.length("".join(seqs[:target_length]))
         assert length < target_length
@@ -300,18 +318,3 @@ class TruncateLines(Style):
             [self.truncate(line) for line in pre_lines],
             [self.truncate(line) for line in post_lines],
         )
-
-
-def draw_nodes(node: Node) -> Iterator[Tuple[str, Node]]:
-    if node.collapsed:
-        yield node.compact, node
-    else:
-        yield from [(line, node) for line in node.full_pre]
-        for child in node.children:
-            yield from draw_nodes(child)
-        yield from [(line, node) for line in node.full_post]
-
-
-def render_nodes(root: Node, style: Style) -> Iterator[Tuple[str, Node]]:
-    style.render(root)
-    return draw_nodes(root)

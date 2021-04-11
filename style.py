@@ -1,7 +1,6 @@
 from collections import ChainMap
-from contextlib import suppress
 import json
-from typing import Iterator, Tuple
+from typing import Iterator, List, Tuple
 
 from node import Node
 
@@ -38,9 +37,34 @@ class Style:
     def __init__(self, **kwargs):
         pass
 
-    def render(self, node: Node) -> None:
-        """Annotate this Node and its children with rendered data."""
+    def compact(self, node: Node) -> str:
+        """Return the compact representation for the given node."""
         raise NotImplementedError
+
+    def full(self, node: Node) -> Tuple[List[str], List[str]]:
+        """Return the full representation for the given node.
+
+        Return a (pre_lines, post_lines) pair of string lists holding the
+        lines to display preceding the node's children (if any), and the lines
+        to display following the node's children.
+        """
+        raise NotImplementedError
+
+    def render(self, node: Node) -> None:
+        """Annotate this Node and its children with rendered data.
+
+        Set the .compact, .full_pre, and .full_post attributes on the given
+        Node object and all its children.
+        """
+        node.compact = self.compact(node)
+        node.full_pre, node.full_post = self.full(node)
+
+        assert "\n" not in node.compact
+        assert all("\n" not in line for line in node.full_pre)
+        assert all("\n" not in line for line in node.full_post)
+
+        for child in node.children:
+            self.render(child)
 
 
 class CodeLikeStyle(Style):
@@ -78,49 +102,43 @@ class CodeLikeStyle(Style):
     def combine_key_value(self, formatted_key, formatted_value):
         return formatted_key + self.key_value_sep + formatted_value
 
+    def prefix(self, node):
+        return self.indent * node.level
+
+    def suffix(self, node):
+        if not node.is_child:
+            return ""
+        elif node.is_last_child and not self.item_terminator_after_last:
+            return ""
+        else:
+            return self.item_terminator
+
     def compact(self, node):
         s = self.format_value(node)
-        with suppress(KeyError):
+        if node.has_key:
             s = self.combine_key_value(self.format_key(node), s)
-        return s
+        return self.prefix(node) + s + self.suffix(node)
 
     def full(self, node):
-        post_lines = []
-        if node.children():  # internal node (non-empty)
-            pre_line = self.open(node)
-            post_lines = [self.close(node)]
-        elif "children" in node:  # internal node (empty)
-            pre_line = self.empty(node)
-        else:  # leaf node
+        post_line = None
+        if node.is_leaf:
             pre_line = self.format_value(node)
+        elif node.children:  # internal node (non-empty)
+            pre_line = self.open(node)
+            post_line = self.close(node)
+        else:  # internal node (empty)
+            pre_line = self.empty(node)
 
-        with suppress(KeyError):
+        if node.has_key:
             pre_line = self.combine_key_value(self.format_key(node), pre_line)
-        return pre_line, post_lines
 
-    def render(self, node: Node) -> None:
-        prefix = self.indent * node["level"]
-
-        in_container = node.get("is_child", False)
-        is_last = node.get("is_last_child", False)
-        if in_container and (self.item_terminator_after_last or not is_last):
-            suffix = self.item_terminator
+        if post_line is None:
+            pre_line = self.prefix(node) + pre_line + self.suffix(node)
         else:
-            suffix = ""
+            pre_line = self.prefix(node) + pre_line
+            post_line = self.prefix(node) + post_line + self.suffix(node)
 
-        pre_line, post_lines = self.full(node)
-
-        # The suffix for this node goes at the end of its last line
-        if suffix and post_lines:
-            post_lines[-1] += suffix
-            suffix = ""
-
-        node["compact"] = prefix + self.compact(node) + suffix
-        node["full_pre"] = [prefix + pre_line + suffix]
-        node["full_post"] = [prefix + line for line in post_lines]
-
-        for child in node.children(default=[]):
-            self.render(child)
+        return [pre_line], ([] if post_line is None else [post_line])
 
 
 class PythonStyle(CodeLikeStyle):
@@ -153,7 +171,7 @@ class JSONStyle(CodeLikeStyle):
         return json.dumps(value)
 
 
-class Colorizer(CodeLikeStyle):
+class SyntaxColor(CodeLikeStyle):
     Schemes = {  # {scheme_name: {node.kind: color_name_or_rgb_tuple}}
         "jq": {  # from the `jq` commandline JSON processor
             "indent": "bright_white",
@@ -182,7 +200,7 @@ class Colorizer(CodeLikeStyle):
 
     def __init__(self, **kwargs):
         self.term = kwargs["term"]
-        self.colors = self._prepare_scheme(kwargs.get("scheme", "jq"))
+        self.colors = self._prepare_scheme(kwargs.get("scheme", "Dark+"))
         super().__init__(**kwargs)
         self.indent = self._color("indent")(self.indent)
         self.key_value_sep = self._color("key_value_sep")(self.key_value_sep)
@@ -250,13 +268,50 @@ class Colorizer(CodeLikeStyle):
 #         return ""
 
 
+class TruncateLines(Style):
+    def __init__(self, **kwargs):
+        self.term = kwargs["term"]
+        self.width = self.term.width
+        super().__init__(**kwargs)
+
+    def _trunc_index(self, seqs, target_length):
+        length = self.term.length("".join(seqs[:target_length]))
+        assert length < target_length
+        for i in range(target_length, len(seqs) + 1):
+            length += self.term.length(seqs[i])
+            if length > target_length:
+                return i - 1
+        assert False
+
+    def truncate(self, line):
+        if self.term.length(line) > self.width:
+            seqs = self.term.split_seqs(line)
+            i = self._trunc_index(seqs, self.width - 1)
+            return "".join(seqs[:i]) + self.term.reverse("̇̇̇…")
+        else:
+            return line
+
+    def compact(self, node):
+        return self.truncate(super().compact(node))
+
+    def full(self, node):
+        pre_lines, post_lines = super().full(node)
+        return (
+            [self.truncate(line) for line in pre_lines],
+            [self.truncate(line) for line in post_lines],
+        )
+
+
+def draw_nodes(node: Node) -> Iterator[Tuple[str, Node]]:
+    if node.collapsed:
+        yield node.compact, node
+    else:
+        yield from [(line, node) for line in node.full_pre]
+        for child in node.children:
+            yield from draw_nodes(child)
+        yield from [(line, node) for line in node.full_post]
+
+
 def render_nodes(root: Node, style: Style) -> Iterator[Tuple[str, Node]]:
     style.render(root)
-
-    def previsit(node):
-        yield from [(line, node) for line in node["full_pre"]]
-
-    def postvisit(node):
-        yield from [(line, node) for line in node["full_post"]]
-
-    yield from root.dfwalk(previsit, postvisit)
+    return draw_nodes(root)

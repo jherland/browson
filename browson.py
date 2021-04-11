@@ -54,10 +54,10 @@ class ResizeEvent(Exception):
 class UI:
     context_lines = 1  # how many context lines around the focused line?
 
-    def __init__(self, root, term, style):
+    def __init__(self, root, term, style_class):
         self.root = root
         self.term = term
-        self.style = style
+        self.style_class = style_class
 
         # Main UI state variables
         self.lines = []  # from self.render()
@@ -74,11 +74,6 @@ class UI:
 
     # Actions triggered from input
 
-    def reset_status(self):
-        self._status = None
-        self._timeout = None
-        self.draw_status()
-
     def set_focus(self, line):
         self.focus = clamp(line, 1, len(self.lines))
         self.adjust_viewport()
@@ -86,22 +81,31 @@ class UI:
     def move_focus(self, relative):
         return self.set_focus(self.focus + relative)
 
-    def adjust_viewport(self):
-        height = self.term.height - 2
-        start, _ = self.viewport
+    def collapse(self):
+        node = self.nodes[self.focus - 1]
+        if node.collapsed:
+            return  # already collapsed
+        node.collapsed = True
+        nodelines = [i for i, n in enumerate(self.nodes) if n is node]
+        start, end = nodelines[0], nodelines[-1]
+        lines, nodes = map(list, zip(*style.draw_nodes(node)))
+        self.nodes[start : end + 1] = nodes
+        self.lines[start : end + 1] = lines
+        self.focus = start + 1
+        self.adjust_viewport()
 
-        if self.focus < start:  # scroll viewport up
-            start = self.focus - self.context_lines
-        elif self.focus > start + height:  # scroll viewport down
-            start = self.focus + self.context_lines - height
-        # Keep viewport within rendered lines
-        start = max(1, min(len(self.lines), start + height) - height)
-
-        self.viewport = (start, start + height)
-        self._need_draw = True
+    def expand(self):
+        node = self.nodes[self.focus - 1]
+        if not node.collapsed:
+            return  # already expanded
+        node.collapsed = False
+        lines, nodes = map(list, zip(*style.draw_nodes(node)))
+        self.nodes[self.focus - 1 : self.focus] = nodes
+        self.lines[self.focus - 1 : self.focus] = lines
+        self.adjust_viewport()
 
     def on_resize(self):
-        self.adjust_viewport()
+        self._need_render = True
         raise ResizeEvent()  # trigger exit from keyboard polling
 
     def rerender(self):
@@ -135,6 +139,9 @@ class UI:
             "KEY_PGDOWN": partial(self.move_focus, self.term.height - 3),
             "KEY_HOME": partial(self.set_focus, 1),
             "KEY_END": partial(self.set_focus, len(self.lines)),
+            # collapse/expand
+            "KEY_LEFT": self.collapse,
+            "KEY_RIGHT": self.expand,
             # re-render/re-draw
             "KEY_F5": self.rerender,
             "\x0c": self.redraw,  # Ctrl+L
@@ -146,6 +153,25 @@ class UI:
         for key in [str(keystroke), keystroke.name, None]:
             with suppress(KeyError):
                 return keymap[key]
+
+    def reset_status(self):
+        self._status = None
+        self._timeout = None
+        self.draw_status()
+
+    def adjust_viewport(self):
+        height = self.term.height - 2
+        start, _ = self.viewport
+
+        if self.focus < start:  # scroll viewport up
+            start = self.focus - self.context_lines
+        elif self.focus > start + height:  # scroll viewport down
+            start = self.focus + self.context_lines - height
+        # Keep viewport within rendered lines
+        start = max(1, min(len(self.lines), start + height) - height)
+
+        self.viewport = (start, start + height)
+        self._need_draw = True
 
     def status(self):
         if self._status is None:  # use default
@@ -169,10 +195,10 @@ class UI:
 
     @debug_time
     def render(self):
-        self.lines, self.nodes = zip(
-            *style.render_nodes(self.root, self.style)
+        my_style = self.style_class(term=self.term)
+        self.lines, self.nodes = map(
+            list, zip(*style.render_nodes(self.root, my_style))
         )
-        assert all("\n" not in line for line in self.lines)
         self.adjust_viewport()
         self._need_render = False
 
@@ -209,37 +235,15 @@ class UI:
         logger.info("Bye!")
 
 
-# TODO: Move this out of the Style hierarchy and into the UI class.
-# Line wrapping should be done at draw time, not at render time
-class LineWrapper(style.Style):
-    def __init__(self, **kwargs):
-        self.term = kwargs["term"]
-        self.enabled = kwargs.get("enabled", self.term.does_styling)
-        self.wrap = kwargs.get("wrap", False)  # default to truncated lines
-        super().__init__(**kwargs)
-
-    def format_line(self, prefix, text, suffix, node):
-        ret = super().format_line(prefix, text, suffix, node)
-        width = self.term.width
-        if self.term.length(ret) > width and self.enabled:
-            if self.wrap:
-                with suppress(KeyError):
-                    prefix += " " * self.term.length(
-                        self.combine_key_value(node, self.format_key(node), "")
-                    )
-                lines = self.term.wrap(ret, subsequent_indent=prefix)
-                ret = "\n".join(lines)
-            else:  # truncate
-                lines = self.term.wrap(ret, width=self.term.width - 1)
-                ret = lines[0] + self.term.reverse("̇̇̇…")
-        return ret
-
-
-class MyStyle(style.Colorizer, style.JSONStyle):
+class MyStyle(style.TruncateLines, style.SyntaxColor, style.JSONStyle):
     pass
 
 
 # TODO:
+# - We need to _pull_ rendered strings on demand. Too expensive to render
+#   everything up-front.
+# - instead of ._need_draw == True/False, we need a span (or list?) or lines
+#   to be redrawn
 # - move UI into separate module
 # - decouple line wrapping from styles.
 #   - styles are applied at render time
@@ -264,7 +268,7 @@ def main():
 
     logger.info("Running app...")
     term = Terminal()
-    ui = UI(root, term, MyStyle(term=term))
+    ui = UI(root, term, MyStyle)
     if term.is_a_tty:
         ui.run()
     else:

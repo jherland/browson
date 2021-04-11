@@ -8,26 +8,26 @@ class TestNode_build:
         assert n.name == expect_name
         assert n.kind is expect_kind
         assert n.value == expect_value
-        assert n.children() is None
+        assert n.is_leaf
 
     def verify_collection(self, n, expect_kind, expect_value, expect_name=""):
         assert n.name == expect_name
         assert n.kind is expect_kind
         assert n.value == expect_value
         assert n.kind in {list, tuple, set, dict}
-        assert isinstance(n.children(), list)
-        assert len(n.children()) == len(expect_value)
+        assert not n.is_leaf
+        assert len(n.children) == len(expect_value)
         if n.kind is dict:
             expect_children = [
-                Node(f"{expect_name}.{k}", type(v), v, key=k)
+                Node(f"{expect_name}.{k}", type(v), v, parent=n, key=k)
                 for k, v in expect_value.items()
             ]
         else:
             expect_children = [
-                Node(f"{expect_name}[{i}]", type(c), c)
+                Node(f"{expect_name}[{i}]", type(c), c, parent=n)
                 for i, c in enumerate(expect_value)
             ]
-        assert n.children() == expect_children
+        assert n.children == expect_children
 
     # singletons
     def test_None(self):
@@ -73,7 +73,7 @@ class TestNode_build:
         assert n.name == ""
         assert n.kind is float
         assert str(n.value) == "nan"
-        assert n.children() is None
+        assert n.is_leaf
 
     # strings
     def test_empty_string(self):
@@ -107,15 +107,15 @@ class TestNode_build:
         assert n.name == ""
         assert n.kind is list
         assert n.value == [[]]
-        assert isinstance(n.children(), list)
-        assert len(n.children()) == 1
+        assert not n.is_leaf
+        assert len(n.children) == 1
 
-        n2 = n.children()[0]
+        n2 = n.children[0]
         assert n2.name == "[0]"
         assert n2.kind is list
         assert n2.value == []
-        assert isinstance(n2.children(), list)
-        assert len(n2.children()) == 0
+        assert not n2.is_leaf
+        assert len(n2.children) == 0
         self.verify_collection(n2, list, [], "[0]")
 
     def test_list_of_list_of_list_of_one_string(self):
@@ -123,17 +123,17 @@ class TestNode_build:
         assert n.name == ""
         assert n.kind is list
         assert n.value == [[["foo"]]]
-        assert isinstance(n.children(), list)
-        assert len(n.children()) == 1
+        assert not n.is_leaf
+        assert len(n.children) == 1
 
-        n2 = n.children()[0]
+        n2 = n.children[0]
         assert n2.name == "[0]"
         assert n2.kind is list
         assert n2.value == [["foo"]]
-        assert isinstance(n2.children(), list)
-        assert len(n2.children()) == 1
+        assert not n2.is_leaf
+        assert len(n2.children) == 1
 
-        n3 = n2.children()[0]
+        n3 = n2.children[0]
         self.verify_collection(n3, list, ["foo"], "[0][0]")
 
     # tuples
@@ -185,45 +185,47 @@ class TestNode_dfwalk:
         n = Node.build(["foo", 123, True])
         assert list(n.dfwalk()) == [
             n,
-            Node("[0]", str, "foo"),
-            Node("[1]", int, 123),
-            Node("[2]", bool, True),
+            Node("[0]", str, "foo", parent=n),
+            Node("[1]", int, 123, parent=n),
+            Node("[2]", bool, True, parent=n),
         ]
 
     def test_simple_dict(self):
         n = Node.build({"foo": 123, "bar": 456, "baz": 789})
         assert list(n.dfwalk()) == [
             n,
-            Node(".foo", int, 123, key="foo"),
-            Node(".bar", int, 456, key="bar"),
-            Node(".baz", int, 789, key="baz"),
+            Node(".foo", int, 123, key="foo", parent=n),
+            Node(".bar", int, 456, key="bar", parent=n),
+            Node(".baz", int, 789, key="baz", parent=n),
         ]
 
     def test_nested_dict(self):
         n = Node.build({"foo": {"a": 1, "b": 2}, "bar": [3, 4], "baz": {5, 6}})
-        x_foo_a = Node(".foo.a", int, 1, key="a")
-        x_foo_b = Node(".foo.b", int, 2, key="b")
-        x_bar_0 = Node(".bar[0]", int, 3)
-        x_bar_1 = Node(".bar[1]", int, 4)
-        x_baz_0 = Node(".baz[0]", int, 5)
-        x_baz_1 = Node(".baz[1]", int, 6)
+        foo = Node(
+            ".foo", dict, {"a": 1, "b": 2}, parent=n, key="foo", children=[]
+        )
+        foo_a = Node(".foo.a", int, 1, parent=foo, key="a")
+        foo_b = Node(".foo.b", int, 2, parent=foo, key="b")
+        foo.children.extend([foo_a, foo_b])
+        bar = Node(".bar", list, [3, 4], parent=n, key="bar", children=[])
+        bar_0 = Node(".bar[0]", int, 3, parent=bar)
+        bar_1 = Node(".bar[1]", int, 4, parent=bar)
+        bar.children.extend([bar_0, bar_1])
+        baz = Node(".baz", set, {5, 6}, parent=n, key="baz", children=[])
+        baz_0 = Node(".baz[0]", int, 5, parent=baz)
+        baz_1 = Node(".baz[1]", int, 6, parent=baz)
+        baz.children.extend([baz_0, baz_1])
         assert list(n.dfwalk()) == [
             n,
-            Node(
-                ".foo",
-                dict,
-                {"a": 1, "b": 2},
-                key="foo",
-                children=[x_foo_a, x_foo_b],
-            ),
-            x_foo_a,
-            x_foo_b,
-            Node(".bar", list, [3, 4], key="bar", children=[x_bar_0, x_bar_1]),
-            x_bar_0,
-            x_bar_1,
-            Node(".baz", set, {5, 6}, key="baz", children=[x_baz_0, x_baz_1]),
-            x_baz_0,
-            x_baz_1,
+            foo,
+            foo_a,
+            foo_b,
+            bar,
+            bar_0,
+            bar_1,
+            baz,
+            baz_0,
+            baz_1,
         ]
 
     def test_str_visit_heterogeneous_structure(self):

@@ -1,72 +1,52 @@
+from typing import Any, List, Optional
+
+
 class Node:
     """Encapsulate the tree of a Python (or JSON) data structure."""
 
     @staticmethod
-    def is_scalar(obj):
-        return not isinstance(obj, (dict, list, tuple, set))
+    def is_scalar(value):
+        """Return True iff 'value' should be represented by a leaf node."""
+        return not isinstance(value, (dict, list, tuple, set))
 
     @classmethod
-    def build(cls, obj, name="", level=0, **kwargs):
+    def build(cls, obj, name="", parent=None, **kwargs):
         if cls.is_scalar(obj):
-            return cls(name, type(obj), obj, level=level, **kwargs)
+            return cls(name, type(obj), obj, parent=parent, **kwargs)
         else:
-            child_args = dict(level=level + 1, is_child=True)
-            if isinstance(obj, dict):
-                children = [
-                    cls.build(v, f"{name}.{k}", key=k, **child_args)
-                    for k, v in obj.items()
-                ]
-            else:
-                children = [
-                    cls.build(v, f"{name}[{i}]", **child_args)
-                    for i, v in enumerate(obj)
-                ]
-            if children:
-                children[0]["is_first_child"] = True
-                children[-1]["is_last_child"] = True
-            return cls(
-                name, type(obj), obj, level=level, children=children, **kwargs
+            children = []
+            ret = cls(
+                name,
+                type(obj),
+                obj,
+                parent=parent,
+                _children=children,
+                **kwargs,
             )
 
+            if isinstance(obj, dict):
+                children.extend(
+                    cls.build(v, f"{name}.{k}", parent=ret, key=k)
+                    for k, v in obj.items()
+                )
+            else:
+                children.extend(
+                    cls.build(v, f"{name}[{i}]", parent=ret)
+                    for i, v in enumerate(obj)
+                )
+            return ret
+
     def __init__(self, name, kind, value, **kwargs):
-        self.name = name
-        self.kind = kind
-        self.value = value
-        self.extra = kwargs
-
-    def __contains__(self, key):
-        return key in self.extra
-
-    def get(self, key, default=None):
-        return self.extra.get(key, default)
-
-    def __getitem__(self, key):
-        return self.extra[key]
-
-    def __setitem__(self, key, value):
-        self.extra[key] = value
-
-    def __delitem__(self, key):
-        del self.extra[key]
-
-    @property
-    def key(self):
-        """Dict items have a key associated with their value."""
-        return self["key"]
-
-    @property
-    def is_leaf(self):
-        """Return True iff this node does not have any children."""
-        return "children" not in self.extra
-
-    # TODO: @property
-    def children(self, default=None):
-        """Internal nodes (aka. collections) have children nodes."""
-        return self.get("children", default)
+        self.name: str = name
+        self.kind: type = kind
+        self.value: Any = value
+        self.parent: "Optional[Node]" = None
+        self._children: "Optional[List[Node]]" = None
+        self.collapsed: bool = False
+        self.__dict__.update(kwargs)
 
     def __str__(self):
-        children = self.children()
-        num_children = "*" if children is None else len(children)
+        num_children = "*" if self.is_leaf else len(self._children)
         return f"{self.name}/{self.kind.__name__}/{num_children}"
 
     def __repr__(self):
@@ -80,6 +60,42 @@ class Node:
         assert self.kind is other.kind
         return result
 
+    @property
+    def is_leaf(self):
+        """Return True iff this is a leaf node (i.e. cannot have any children).
+
+        This is different from an empty container, i.e. an "internal" node
+        whose list of children is empty."""
+        return self._children is None
+
+    @property
+    def children(self):
+        """Return this node's children.
+
+        Return an empty list for leaf nodes, as a convenience for callers that
+        typically iterated over this methods return value."""
+        return [] if self._children is None else self._children
+
+    @property
+    def is_child(self):
+        return self.parent is not None
+
+    @property
+    def is_first_child(self):
+        return self.is_child and self is self.parent.children[0]
+
+    @property
+    def is_last_child(self):
+        return self.is_child and self is self.parent.children[-1]
+
+    @property
+    def level(self):
+        return 0 if self.parent is None else (self.parent.level + 1)
+
+    @property
+    def has_key(self):
+        return hasattr(self, "key")
+
     def yield_node(node):
         yield node
 
@@ -87,7 +103,7 @@ class Node:
         """Depth-first walk, yields values yielded from visitor function."""
         if preorder is not None:
             yield from preorder(self)
-        for child in self.children(()):
+        for child in self.children:
             yield from child.dfwalk(preorder, postorder)
         if postorder is not None:
             yield from postorder(self)

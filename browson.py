@@ -21,6 +21,7 @@ class ResizeEvent(Exception):
 class UI:
     context_lines = 1  # how many context lines around the focused line?
 
+    @debug_time
     def __init__(self, root, term, style_class):
         self.root = root
         self.term = term
@@ -28,9 +29,9 @@ class UI:
         self.style = style_class(term=self.term)
 
         # Main UI state variables
-        self.lines = []  # from self.render()
-        self.nodes = []  # Node objects corresponding to self.lines
-        self.focus = 0  # currently focused/selected index in .lines/.nodes
+        # [(line, node), ...], filled by .draw()
+        self.lines = list(self.root.draw(self.style))
+        self.focus = 0  # currently focused/selected index in .lines
         self.viewport = (0, 0)  # line span currently visible
 
         # Misc. state/communication variables
@@ -41,6 +42,53 @@ class UI:
 
         self.adjust_viewport()
 
+    def node_span(self, start=None):
+        """Return (first, last) span of lines for the current node.
+
+        Look up the node at self.lines[start] ('start' defaults to self.focus
+        if not given) and find all adjacent lines that represent that node or
+        any of its children. Return (first, last) indexes (inclusive) of this
+        span of adjacent lines.
+
+        Begin at self.lines[start] and walk in both direction until we find the
+        first lines that are not associated with this node or its children.
+
+        E.g. if 'node' has no children, and is only represented by a single
+        line, then return (start, start).
+        """
+        start = self.focus if start is None else start
+        current = self.lines[start][1]
+
+        def related(node):
+            return current in list(node.ancestors(include_self=True))
+
+        first = start
+        while first > 0 and related(self.lines[first - 1][1]):
+            first -= 1
+        last = start
+        while last < len(self.lines) - 1 and related(self.lines[last + 1][1]):
+            last += 1
+        return first, last
+
+    def redraw_node(self, start=None):
+        """Redraw the node (w/children, if applicable) at self.lines[start].
+
+        Look up the node at self.lines[start] ('start' defaults to self.focus
+        if not given) and regenerate its lines (incl. children if applicable).
+        Replace self.lines[start] and all surrounding lines associated with
+        the node (see .node_span() for more details) with the regenerated
+        lines.
+
+        Return the new (first, last) line span for the current node.
+        """
+        start = self.focus if start is None else start
+        current = self.lines[start][1]
+        first, last = self.node_span()  # find related old lines
+        new_lines = list(current.draw(self.style))  # regenerate new lines
+        self.lines[first : last + 1] = new_lines  # replace
+        self.redraw()
+        return first, first + len(new_lines) - 1
+
     # Actions triggered from input
 
     def set_focus(self, line):
@@ -50,28 +98,25 @@ class UI:
     def move_focus(self, relative):
         return self.set_focus(self.focus + relative)
 
+    @debug_time
     def collapse(self):
-        node = self.nodes[self.focus]
+        _, node = self.lines[self.focus]
         if node.collapsed:
             return  # already collapsed
         node.collapsed = True
-        nodelines = [i for i, n in enumerate(self.nodes) if n is node]
-        start, end = nodelines[0], nodelines[-1]
-        lines, nodes = map(list, zip(*node.draw(self.style)))
-        self.nodes[start : end + 1] = nodes
-        self.lines[start : end + 1] = lines
-        self.set_focus(start)
 
+        new_focus, _ = self.redraw_node(self.focus)
+        self.set_focus(new_focus)
+
+    @debug_time
     def expand(self):
-        node = self.nodes[self.focus]
+        _, node = self.lines[self.focus]
         if not node.collapsed:
             return  # already expanded
         node.collapsed = False
-        lines, nodes = map(list, zip(*node.draw(self.style)))
-        self.nodes[self.focus : self.focus + 1] = nodes
-        self.lines[self.focus : self.focus + 1] = lines
-        # self.focus does not change
-        self.redraw()
+
+        new_focus, _ = self.redraw_node(self.focus)
+        self.set_focus(new_focus)
 
     def redraw(self):
         self._need_draw = True
@@ -146,7 +191,7 @@ class UI:
 
     def status(self):
         if self._status is None:  # use default
-            node = self.nodes[self.focus]
+            _, node = self.lines[self.focus]
             return self.term.ljust(
                 f"{node.name} - ({self.focus + 1}/{len(self.lines)} lines) -"
             )
@@ -168,10 +213,8 @@ class UI:
     def draw(self):
         print(self.term.home + self.term.clear, end="")
         start, end = self.viewport
-        # FIXME:
-        self.lines, self.nodes = map(list, zip(*self.root.draw(self.style)))
-        for n, line in enumerate(self.lines[start : end + 1], start):
-            if n == self.focus:
+        for i, (line, _) in enumerate(self.lines[start : end + 1], start):
+            if i == self.focus:
                 line = self.highlight_line(line)
             print(line)
         self.draw_status()
@@ -204,19 +247,20 @@ class MyStyle(style.TruncateLines, style.SyntaxColor, style.JSONStyle):
 # TODO:
 # - We need to _pull_ rendered strings on demand. Too expensive to render
 #   everything up-front.
-# - instead of ._need_draw == True/False, we need a span (or list?) or lines
-#   to be redrawn
+# - instead of ._need_draw == True/False, do we need a span (or list?) or lines
+#   to be redrawn?
 # - move UI into separate module
 # - decouple line wrapping from styles.
 #   - styles are applied at render time
-#   - wrapping is applied at draw time
-# - render both multiline/nested and oneline/compact node representations
-#   - allow actions to switch between multiline and oneline with quick redraw
+#   - wrapping is applied at draw time (Nope. Too expensive!)
 # - help window with keymap
 # - navigate to matching bracket/parent/sibling
 # - search
 # - filter
-# - expand/collapse
+# - expand/collapse all?
+# - expand/collapse below a given level?
+# - expand only nodes that match the current search
+# - expand only the focused node (and its parents
 
 
 def main():

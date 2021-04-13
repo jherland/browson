@@ -49,14 +49,14 @@ class Node:
         return f"{self.name}/{self.kind.__name__}/{num_children}"
 
     def __repr__(self):
-        args = [repr(self.name), self.kind.__name__, repr(self.value)]
-        args += [f"{k}={v!r}" for k, v in self.extra.items()]
+        args = [f"{k}={v!r}" for k, v in self.__dict__.items()]
         return f"{self.__class__.__name__}({', '.join(args)})"
 
     def __eq__(self, other):
         assert isinstance(other, Node), repr(other)
         result = self.name == other.name and self.value == other.value
-        assert self.kind is other.kind
+        if result:
+            assert self.kind is other.kind, f"{self} != {other}"
         return result
 
     @property
@@ -94,6 +94,13 @@ class Node:
     @property
     def has_key(self):
         return hasattr(self, "key")
+
+    def ancestors(self, include_self=False):
+        """Yield transitive parents of this node."""
+        if include_self:
+            yield self
+        if self.parent is not None:
+            yield from self.parent.ancestors(include_self=True)
 
     def yield_node(node):
         yield node

@@ -267,3 +267,14 @@ class TestNode_dfwalk:
             .nested[0][0].key/set/1
             .nested[0][0].key[0]/str/*"""
         )
+
+
+def test_node_ancestors():
+    n = Node.build({"foo": {"bar": {"baz": "xyzzy"}}})
+    assert list(n.ancestors()) == []
+    foo = n.children[0]
+    assert list(foo.ancestors()) == [n]
+    bar = foo.children[0]
+    assert list(bar.ancestors()) == [foo, n]
+    baz = bar.children[0]
+    assert list(baz.ancestors()) == [bar, foo, n]

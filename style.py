@@ -1,6 +1,6 @@
 from collections import ChainMap
 import json
-from typing import Iterator, List, Optional, Tuple
+from typing import Iterator, List, NamedTuple, Optional, Tuple
 
 from node import Node
 
@@ -21,6 +21,11 @@ from node import Node
 #       - a list of lines to be shown after its children
 
 
+class RenderedLine(NamedTuple):
+    line: str
+    node: "DrawableNode"
+
+
 class DrawableNode(Node):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -35,21 +40,21 @@ class DrawableNode(Node):
             for child in self.children:
                 child.invalidate(recurse)
 
-    def draw(self, style: "Style") -> Iterator[Tuple[str, Node]]:
+    def render(self, style: "Style") -> Iterator[RenderedLine]:
         if self.collapsed:
             if self.compact is None:
                 self.compact = style.compact(self)
                 assert "\n" not in self.compact
-            yield self.compact, self
+            yield RenderedLine(self.compact, self)
         else:
             if self.full is None:
                 self.full = style.full(self)
                 assert all("\n" not in line for p in self.full for line in p)
             pre, post = self.full
-            yield from [(line, self) for line in pre]
+            yield from [RenderedLine(line, self) for line in pre]
             for child in self.children:
-                yield from child.draw(style)
-            yield from [(line, self) for line in post]
+                yield from child.render(style)
+            yield from [RenderedLine(line, self) for line in post]
 
 
 class Style:
@@ -57,7 +62,7 @@ class Style:
 
     This is used to pre-render the compact + full representations of each
     DrawableNode instance in a tree of such nodes. The rendering is done
-    on-demand from DrawableNode.draw().
+    on-demand from DrawableNode.render().
     """
 
     def __init__(self, **kwargs):

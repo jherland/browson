@@ -29,8 +29,7 @@ class UI:
         self.style = style_class(term=self.term)
 
         # Main UI state variables
-        # [(line, node), ...], filled by .draw()
-        self.lines = list(self.root.draw(self.style))
+        self.lines = list(self.root.render(self.style))  # [rendered_line, ...]
         self.focus = 0  # currently focused/selected index in .lines
         self.viewport = (0, 0)  # line span currently visible
 
@@ -42,31 +41,36 @@ class UI:
 
         self.adjust_viewport()
 
-    def node_span(self, start=None):
-        """Return (first, last) span of lines for the current node.
+    def node_span(self, start=None, node=None):
+        """Return (first, last) span of lines for the given node.
 
-        Look up the node at self.lines[start] ('start' defaults to self.focus
-        if not given) and find all adjacent lines that represent that node or
-        any of its children. Return (first, last) indexes (inclusive) of this
-        span of adjacent lines.
+        If not given, 'node' is found at self.lines[start] ('start' defaults
+        to self.focus if not given).
+
+        Find all lines adjacent to 'start' that represent this node or any of
+        its children. Return (first, last) indexes (inclusive) of this span of
+        adjacent lines.
 
         Begin at self.lines[start] and walk in both direction until we find the
         first lines that are not associated with this node or its children.
 
         E.g. if 'node' has no children, and is only represented by a single
-        line, then return (start, start).
+        line, then return (start, start). If 'node' is the root node, return
+        (0, len(self.lines) - 1).
         """
+
         start = self.focus if start is None else start
-        current = self.lines[start][1]
+        node = self.lines[start].node if node is None else node
 
-        def related(node):
-            return current in list(node.ancestors(include_self=True))
+        def inside(child):
+            return node in list(child.ancestors(include_self=True))
 
+        assert inside(self.lines[start].node)
         first = start
-        while first > 0 and related(self.lines[first - 1][1]):
+        while first > 0 and inside(self.lines[first - 1].node):
             first -= 1
         last = start
-        while last < len(self.lines) - 1 and related(self.lines[last + 1][1]):
+        while last < len(self.lines) - 1 and inside(self.lines[last + 1].node):
             last += 1
         return first, last
 
@@ -82,9 +86,9 @@ class UI:
         Return the new (first, last) line span for the current node.
         """
         start = self.focus if start is None else start
-        current = self.lines[start][1]
+        current = self.lines[start].node
         first, last = self.node_span()  # find related old lines
-        new_lines = list(current.draw(self.style))  # regenerate new lines
+        new_lines = list(current.render(self.style))  # regenerate new lines
         self.lines[first : last + 1] = new_lines  # replace
         self.redraw()
         return first, first + len(new_lines) - 1
@@ -98,9 +102,29 @@ class UI:
     def move_focus(self, relative):
         return self.set_focus(self.focus + relative)
 
+    def jump_node(self, *, forwards=False):
+        """Move focus to the first/last line of the current (or parent) node.
+
+        Jump to the first line representing the current node. If already at the
+        first line, jump to the first line of the parent node. If 'last' is
+        True, jump to the last line representing the current node (or parent
+        node).
+        """
+        first, last = self.node_span()
+        target = last if forwards else first
+        current = self.lines[self.focus].node
+        while self.focus == target:  # jump to parent instead
+            parent = current.parent
+            if parent is None:
+                break
+            first, last = self.node_span(self.focus, parent)
+            target = last if forwards else first
+            current = parent
+        self.set_focus(target)
+
     @debug_time
     def collapse(self):
-        _, node = self.lines[self.focus]
+        node = self.lines[self.focus].node
         if node.collapsed:
             return  # already collapsed
         node.collapsed = True
@@ -110,7 +134,7 @@ class UI:
 
     @debug_time
     def expand(self):
-        _, node = self.lines[self.focus]
+        node = self.lines[self.focus].node
         if not node.collapsed:
             return  # already expanded
         node.collapsed = False
@@ -155,6 +179,8 @@ class UI:
             "KEY_PGDOWN": partial(self.move_focus, self.term.height - 3),
             "KEY_HOME": partial(self.set_focus, 0),
             "KEY_END": partial(self.set_focus, len(self.lines) - 1),
+            "[": partial(self.jump_node, forwards=False),
+            "]": partial(self.jump_node, forwards=True),
             # collapse/expand
             "KEY_LEFT": self.collapse,
             "KEY_RIGHT": self.expand,
@@ -191,7 +217,7 @@ class UI:
 
     def status(self):
         if self._status is None:  # use default
-            _, node = self.lines[self.focus]
+            node = self.lines[self.focus].node
             return self.term.ljust(
                 f"{node.name} - ({self.focus + 1}/{len(self.lines)} lines) -"
             )
@@ -221,7 +247,7 @@ class UI:
         self._need_draw = False
 
     def dump(self):
-        for line, _ in self.root.draw(self.style):
+        for line, _ in self.root.render(self.style):
             print(line)
 
     def run(self):
@@ -245,6 +271,7 @@ class MyStyle(style.TruncateLines, style.SyntaxColor, style.JSONStyle):
 
 
 # TODO:
+# - Split node rendering out of UI class.
 # - We need to _pull_ rendered strings on demand. Too expensive to render
 #   everything up-front.
 # - instead of ._need_draw == True/False, do we need a span (or list?) or lines

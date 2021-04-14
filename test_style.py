@@ -8,7 +8,7 @@ def build_node(obj):
 
 
 def draw_lines(node, style):
-    return "\n".join(line for line, _ in node.draw(style))
+    return "\n".join(line for line, _ in node.render(style))
 
 
 class Test_render_nodes_python:

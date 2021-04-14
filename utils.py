@@ -18,16 +18,28 @@ def clamp(val, minimum, maximum):
     return minimum if val < minimum else maximum if val > maximum else val
 
 
+# Visually distinguish nested use of debug_time
+debug_indent = 0
+
+
 def debug_time(f):
     """Decorator to produce debug log messages with function run times."""
 
     @wraps(f)
     def wrapper(*args, **kwargs):
+        global debug_indent
+        verb = "returned"
+        debug_indent += 1
+        t = now()
         try:
-            t = now()
             return f(*args, **kwargs)
+        except BaseException:
+            verb = "aborted"
+            raise
         finally:
-            logger.debug(f"{f.__name__} took {now() - t}s")
+            debug_indent -= 1
+            indent = " " * 4 * debug_indent
+            logger.debug(f"{indent}{f.__name__} {verb} after {now() - t}s")
 
     return wrapper
 
@@ -37,7 +49,7 @@ def signal_handler(signalnum, handler):
     """Install the given signal handler for the duration of this context."""
 
     def wrapped_handler(signum, frame):
-        logger.debug(f"signal handler invoked with {signum}, {frame}")
+        logger.debug(f"signal handler invoked with signal {signum}, {frame}")
         handler()
 
     prev = signal.signal(signalnum, wrapped_handler)

@@ -87,7 +87,7 @@ class UI:
         """
         start = self.focus if start is None else start
         current = self.lines[start].node
-        first, last = self.node_span()  # find related old lines
+        first, last = self.node_span(start)  # find related old lines
         new_lines = list(current.render(self.style))  # regenerate new lines
         self.lines[first : last + 1] = new_lines  # replace
         self.redraw()
@@ -142,11 +142,31 @@ class UI:
         new_focus, _ = self.redraw_node(self.focus)
         self.set_focus(new_focus)
 
+    def collapse_all(self):
+        for node in self.root.dfwalk():
+            node.collapsed = True
+        new_focus, _ = self.redraw_node(0)  # Redraw everything
+        self.set_focus(new_focus)
+
+    def expand_all(self):
+        current = self.lines[self.focus].node
+        for node in self.root.dfwalk():
+            node.collapsed = False
+        self.redraw_node(0)  # Redraw everything
+
+        # Re-focus current node
+        for i, (_, n) in enumerate(self.lines):
+            if n is current:
+                self.set_focus(i)
+                break
+
     def redraw(self):
         self._need_draw = True
 
-    def rerender(self):
+    def rerender_all(self):
         self.root.invalidate(recurse=True)
+        first, last = self.redraw_node(0)
+        assert first == 0 and last == len(self.lines) - 1, f"{(first, last)} != (0, {len(self.lines)})"
         self.redraw()
 
     def on_resize(self):
@@ -184,8 +204,10 @@ class UI:
             # collapse/expand
             "KEY_LEFT": self.collapse,
             "KEY_RIGHT": self.expand,
+            "c": self.collapse_all,
+            "x": self.expand_all,
             # re-render/re-draw
-            "KEY_F5": self.rerender,
+            "KEY_F5": self.rerender_all,
             "\x0c": self.redraw,  # Ctrl+L
             # quitting
             "q": self.quit,

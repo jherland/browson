@@ -74,7 +74,7 @@ class UI:
             last += 1
         return first, last
 
-    def redraw_node(self, start=None):
+    def rerender(self, start=None):
         """Redraw the node (w/children, if applicable) at self.lines[start].
 
         Look up the node at self.lines[start] ('start' defaults to self.focus
@@ -123,36 +123,86 @@ class UI:
         self.set_focus(target)
 
     @debug_time
-    def collapse(self):
-        node = self.lines[self.focus].node
-        if node.collapsed:
-            return  # already collapsed
-        node.collapsed = True
+    def collapse_current(self):
+        """Collapse the current node.
 
-        new_focus, _ = self.redraw_node(self.focus)
+        Redraw the part of the tree related to the current node. Put focus on
+        (the now single line representing) the current node.
+        """
+        current = self.lines[self.focus].node
+        if current.collapsed:
+            return  # already collapsed
+        current.collapsed = True
+
+        new_focus, _ = self.rerender(self.focus)
         self.set_focus(new_focus)
 
     @debug_time
-    def expand(self):
-        node = self.lines[self.focus].node
-        if not node.collapsed:
-            return  # already expanded
-        node.collapsed = False
+    def expand_current(self):
+        """Expand the current node.
 
-        new_focus, _ = self.redraw_node(self.focus)
+        Redraw the part of the tree related to the current node. Put focus on
+        the first line representing the current node.
+        """
+        current = self.lines[self.focus].node
+        if not current.collapsed:
+            return  # already expanded
+        current.collapsed = False
+
+        new_focus, _ = self.rerender(self.focus)
+        self.set_focus(new_focus)
+
+    def collapse_other(self):
+        """Collapse all nodes not on the path to the current node.
+
+        Do not affect the children of the current node.
+        Put focus on (the first line of) the current node.
+        """
+        current = self.lines[self.focus].node
+        path = list(current.ancestors(include_self=True))
+        for node in self.root.dfwalk():
+            if current in list(node.ancestors()):
+                continue  # don't affect children
+            if node not in path:
+                node.collapsed = True  # collapse unrelated nodes
+
+        self.rerender(0)  # redraw everything
+
+        # Re-focus current node
+        for i, (_, n) in enumerate(self.lines):
+            if n is current:
+                self.set_focus(i)
+                break
+
+    def expand_below(self):
+        """Expand this node and all its descendants.
+
+        Do not affect unrelated nodes.
+        Put focus on (the first line of) the current node.
+        """
+        current = self.lines[self.focus].node
+        for node in current.dfwalk():
+            node.collapsed = False  # expand descendants
+
+        new_focus, _ = self.rerender(self.focus)
         self.set_focus(new_focus)
 
     def collapse_all(self):
+        """Collapse all nodes. Put focus on the first/only line."""
         for node in self.root.dfwalk():
             node.collapsed = True
-        new_focus, _ = self.redraw_node(0)  # Redraw everything
+        new_focus, _ = self.rerender(0)  # redraw everything
         self.set_focus(new_focus)
 
     def expand_all(self):
+        """Expand all nodes.
+
+        Put focus back onto (the first line of) the current node.
+        """
         current = self.lines[self.focus].node
         for node in self.root.dfwalk():
             node.collapsed = False
-        self.redraw_node(0)  # Redraw everything
+        self.rerender(0)  # redraw everything
 
         # Re-focus current node
         for i, (_, n) in enumerate(self.lines):
@@ -165,13 +215,13 @@ class UI:
 
     def rerender_all(self):
         self.root.invalidate(recurse=True)
-        first, last = self.redraw_node(0)
+        first, last = self.rerender(0)
         assert first == 0 and last == len(self.lines) - 1, f"{(first, last)} != (0, {len(self.lines)})"
         self.redraw()
 
     def on_resize(self):
         self.style.on_resize()
-        self.rerender()
+        self.rerender_all()
         raise ResizeEvent()  # trigger exit from keyboard polling
 
     def quit(self):
@@ -202,10 +252,12 @@ class UI:
             "[": partial(self.jump_node, forwards=False),
             "]": partial(self.jump_node, forwards=True),
             # collapse/expand
-            "KEY_LEFT": self.collapse,
-            "KEY_RIGHT": self.expand,
-            "c": self.collapse_all,
-            "x": self.expand_all,
+            "KEY_LEFT": self.collapse_current,
+            "c": self.collapse_other,
+            "C": self.collapse_all,
+            "KEY_RIGHT": self.expand_current,
+            "x": self.expand_below,
+            "X": self.expand_all,
             # re-render/re-draw
             "KEY_F5": self.rerender_all,
             "\x0c": self.redraw,  # Ctrl+L

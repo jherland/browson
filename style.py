@@ -22,6 +22,8 @@ from node import Node
 
 
 class RenderedLine(NamedTuple):
+    """A rendered line in the node view, with an associated node."""
+
     line: str
     node: "DrawableNode"
 
@@ -58,7 +60,7 @@ class DrawableNode(Node):
 
 
 class Style:
-    """API for styling the GUI representation of a Node tree.
+    """API for styling the GUI representation of a node tree.
 
     This is used to pre-render the compact + full representations of each
     DrawableNode instance in a tree of such nodes. The rendering is done
@@ -68,15 +70,15 @@ class Style:
     def __init__(self, **kwargs):
         pass
 
-    def on_resize(self):
+    def resize(self, new_width, new_height):
         """This is called when the terminal size changes."""
         pass
 
-    def compact(self, node: Node) -> str:
+    def compact(self, node: DrawableNode) -> str:
         """Return the compact representation for the given node."""
         raise NotImplementedError
 
-    def full(self, node: Node) -> Tuple[List[str], List[str]]:
+    def full(self, node: DrawableNode) -> Tuple[List[str], List[str]]:
         """Return the full representation for the given node.
 
         Return a (pre_lines, post_lines) pair of string lists holding the
@@ -293,9 +295,9 @@ class TruncateLines(Style):
         self.width = self.term.width
         super().__init__(**kwargs)
 
-    def on_resize(self):
-        super().on_resize
-        self.width = self.term.width
+    def resize(self, new_width, new_height):
+        super().resize(new_width, new_height)
+        self.width = new_width
 
     def _trunc_index(self, seqs, target_length):
         length = self.term.length("".join(seqs[:target_length]))

@@ -9,6 +9,7 @@ import sys
 from blessed import Terminal
 
 import style
+from lineinput import LineInput
 from nodeview import NodeView
 from utils import debug_time, signal_handler
 
@@ -22,13 +23,24 @@ class ResizeEvent(Exception):
 class UI:
     def __init__(self, root, term, style):
         self.term = term
-        self.view = NodeView(root, term.width, term.height - 2, style)
+        self.view = NodeView(root, *self.view_size, style)
+        self.input = None
 
         # Misc. state/communication variables
+        self._search = ""  # current search string (empty - no search)
         self._resized = True  # must handle recent window resize
         self._quit = False  # time to quit
         self._status = None  # custom status line
+        self._status_color = self.term.normal  # status line color
         self._timeout = None  # used to reset status line
+
+    @property
+    def view_size(self):
+        return self.term.width, self.term.height - 2
+
+    @property
+    def status_y(self):
+        return self.term.height - 1
 
     # Input handlers
 
@@ -40,8 +52,14 @@ class UI:
 
     def warning(self, message):
         logger.warning(message)
-        self._status = self.term.bright_red(self.term.center(message))
+        self._status = message
+        self._status_color = self.term.bright_red
         self._timeout = 3
+        self.draw_status()
+
+    def search(self):
+        self.input = LineInput(self.term, "Search: ", self._search)
+        self._status_color = self.term.bright_yellow
         self.draw_status()
 
     # Keyboard input
@@ -70,6 +88,8 @@ class UI:
             "KEY_RIGHT": self.view.expand_current,
             "x": self.view.expand_below,
             "X": self.view.expand_all,
+            # search
+            "/": self.search,
             # re-render/re-draw
             "KEY_F5": self.view.rerender_all,
             "\x0c": self.redraw,  # Ctrl+L
@@ -85,7 +105,7 @@ class UI:
     # Resize handling
 
     def handle_resize(self):
-        self.view.resize(self.term.width, self.term.height - 2)
+        self.view.resize(*self.view_size)
         self._resized = False
 
     def on_resize(self):
@@ -96,27 +116,37 @@ class UI:
 
     def reset_status(self):
         self._status = None
+        self._status_color = self.term.normal
+        self.input = None
         self._timeout = None
         self.draw_status()
 
-    def status(self):
-        if self._status is None:  # use default
+    def status_text(self):
+        if self._status is not None:
+            return self._status
+        else:  # use default
             node = self.view.current_node()
             cur, total = self.view.current_position()
-            return self.term.ljust(f"{node.name} - ({cur}/{total} lines) -")
-        else:
-            return self._status
+            message = f"{node.name} - ({cur}/{total} lines) -"
+        return message
 
     def draw_status(self):
-        with self.term.location(0, self.term.height - 1):
-            status_line = self.term.reverse(self.term.ljust(self.status()))
-            print(status_line, end="", flush=True)
+        pre = self.term.move_xy(0, self.status_y) + self._status_color
+        if self.input:  # show line input + cursor
+            text = self.input.draw()
+            cursor = (self.term.length(text), self.status_y)
+            post = self.term.move_xy(*cursor) + self.term.normal_cursor
+        else:  # show status text
+            text = self.status_text()
+            post = self.term.hide_cursor
+
+        line = self.term.reverse(self.term.ljust(text))
+        print(pre + line + post, end="", flush=True)
 
     # Main UI loop
 
     def run(self):
-        term = self.term
-        with term.fullscreen(), term.cbreak(), term.hidden_cursor():
+        with self.term.fullscreen(), self.term.cbreak():
             with signal_handler(signal.SIGWINCH, self.on_resize):
                 while not self._quit:  # main loop
                     try:
@@ -127,10 +157,19 @@ class UI:
                             for line in self.view.draw(self.term):
                                 print(line)
                             self.draw_status()
-                        keystroke = term.inkey(timeout=self._timeout)
-                        self.reset_status()
-                        if keystroke:
-                            self.handle_key(keystroke)()
+                        keystroke = self.term.inkey(timeout=self._timeout)
+                        if keystroke and self.input:  # redirect to line input
+                            self.input.handle_key(keystroke)()
+                            if self._search != self.input.value:
+                                self._search = self.input.value
+                                # TODO: self.view.need_redraw = True ???
+                            self.draw_status()
+                            if self.input.done:
+                                self.reset_status()
+                        else:
+                            self.reset_status()
+                            if keystroke:
+                                self.handle_key(keystroke)()
                     except ResizeEvent:
                         self._resized = True
 

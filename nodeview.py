@@ -20,7 +20,7 @@ class LineSpan(NamedTuple):
 class NodeView:
     """Manage the main view of the tree of nodes."""
 
-    context_lines: int = 1  # how many context lines around the focused line?
+    context: int = 1  # how many context lines around the focused line?
 
     def __init__(
         self, root: DrawableNode, width: int, height: int, style: Style
@@ -57,10 +57,10 @@ class NodeView:
         """Scroll the viewport to make sure the focused line is visible."""
         first = self.visible.first
 
-        if self.focus < first:  # scroll viewport up
-            first = self.focus - self.context_lines
-        elif self.focus > first + self.height:  # scroll viewport down
-            first = self.focus + self.context_lines - self.height
+        if self.focus < first + self.context:  # scroll viewport up
+            first = self.focus - self.context
+        elif self.focus > first + self.height - self.context:  # scroll down
+            first = self.focus + self.context - self.height
         # Keep viewport within rendered lines
         first = max(
             0, min(len(self.lines) - 1, first + self.height) - self.height

@@ -14,7 +14,7 @@ requires = ["blessed >=1",]
 
 [tool.flit.metadata.requires-extra]
 test = ["pytest",]
-dev = ["black", "flake8"]
+dev = ["black", "flake8", "nox"]
 
 [tool.flit.scripts]
 browson = "browson.__main__:main"

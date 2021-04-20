@@ -1,6 +1,6 @@
 import textwrap
 
-from node import Node
+from browson.node import Node
 
 
 class TestNode_build:

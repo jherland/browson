@@ -1,4 +1,9 @@
 # Python
+/dist/
 /.pypy/
 /.venv*/
 __pycache__/
+
+# Misc.
+/*.json
+/browson.log

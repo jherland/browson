@@ -4,8 +4,6 @@ import sys
 from tempfile import NamedTemporaryFile
 import textwrap
 
-import browson
-
 
 class Test_noninteractive_dump:
     def run_on_json_data(self, data):
@@ -13,7 +11,7 @@ class Test_noninteractive_dump:
             json.dump(data, f)
             f.flush()
             proc = subprocess.run(
-                [sys.executable, browson.__file__, f.name],
+                [sys.executable, "-m", "browson", f.name],
                 stdout=subprocess.PIPE,
                 encoding="UTF-8",
                 check=True,

@@ -1,0 +1,24 @@
+[build-system]
+requires = ["flit_core >=2,<4"]
+build-backend = "flit_core.buildapi"
+
+[tool.flit.metadata]
+module = "browson"
+author = "Johan Herland"
+author-email = "johan@herland.net"
+home-page = "https://github.com/jherland/browson"
+description-file = "README.md"
+classifiers = ["License :: OSI Approved :: MIT License",]
+requires-python = "~=3.6"
+requires = ["blessed >=1",]
+
+[tool.flit.metadata.requires-extra]
+test = ["pytest",]
+dev = ["black", "flake8"]
+
+[tool.flit.scripts]
+browson = "browson.__main__:main"
+
+[tool.black]
+line-length = 79
+target_version = ["py36"]

@@ -1,6 +1,6 @@
 import pytest
 
-from utils import clamp, LazyList
+from browson.utils import clamp, LazyList
 
 
 def test_clamp():

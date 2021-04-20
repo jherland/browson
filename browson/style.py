@@ -2,7 +2,7 @@ from collections import ChainMap
 import json
 from typing import Iterator, List, NamedTuple, Optional, Tuple
 
-from node import Node
+from .node import Node
 
 
 # How to "render" the Node tree into something that can be (re)drawn quickly?

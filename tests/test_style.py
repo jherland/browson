@@ -1,6 +1,6 @@
 import textwrap
 
-from style import DrawableNode, PythonStyle, JSONStyle
+from browson.style import DrawableNode, PythonStyle, JSONStyle
 
 
 def build_node(obj):

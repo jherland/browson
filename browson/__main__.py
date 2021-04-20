@@ -8,10 +8,12 @@ import sys
 
 from blessed import Terminal
 
-import style
-from lineinput import LineInput
-from nodeview import NodeView
-from utils import debug_time, signal_handler
+from . import style
+from .lineinput import LineInput
+from .nodeview import NodeView
+from .utils import debug_time, signal_handler
+
+__version__ = "0.1"
 
 logger = logging.getLogger("browson")
 

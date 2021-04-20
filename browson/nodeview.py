@@ -5,8 +5,8 @@ from typing import Iterator, NamedTuple, Optional, Tuple
 
 from blessed import Terminal
 
-from style import DrawableNode, Style
-from utils import clamp, debug_time
+from .style import DrawableNode, Style
+from .utils import clamp, debug_time
 
 logger = logging.getLogger(__name__)
 

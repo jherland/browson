@@ -89,7 +89,6 @@ class LazyList(MutableSequence):
         if n > len(self.realized) and self.iterator is not None:
             self.realized.extend(islice(self.iterator, n - len(self.realized)))
 
-    @debug_time
     def real_length(self):
         self._extract_until_len(sys.maxsize)
         return len(self.realized)

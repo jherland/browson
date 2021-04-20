@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import logging
+import re
 from typing import Iterator, NamedTuple, Optional, Tuple
 
 from blessed import Terminal
@@ -23,12 +24,20 @@ class NodeView:
     context: int = 1  # how many context lines around the focused line?
 
     def __init__(
-        self, root: DrawableNode, width: int, height: int, style: Style
+        self,
+        root: DrawableNode,
+        term: Terminal,
+        width: int,
+        height: int,
+        style: Style,
+        search: str = "",
     ):
         self.root = root
+        self.term = term
         self.width = width
         self.height = height
-        self.style = style
+        self._style = style
+        self._search = search
 
         # Main state variables
         self.lines = []  # list of RenderedLine objects, see .rerender_all()
@@ -44,6 +53,23 @@ class NodeView:
     def style(self, value: Style) -> None:
         self._style = value
         self._style.resize(self.width, self.height)
+        self._render()
+
+    @property
+    def search(self) -> str:
+        return self._search
+
+    @search.setter
+    def search(self, value: str) -> None:
+        if value == getattr(self, "_search", None):
+            return
+        self._search = value
+        self.need_redraw = True  # self._render()
+
+    def _matches(self, i: int) -> bool:
+        """Return True iff self.lines[i] matches self.search."""
+        line = self.term.strip_seqs(self.lines[i].line)
+        return self.search and self.search in line
 
     def current_node(self) -> DrawableNode:
         """Return the currently selected/focused node."""
@@ -52,6 +78,19 @@ class NodeView:
     def current_position(self) -> Tuple[int, int]:
         """Return (focused line, total lines)."""
         return self.focus + 1, len(self.lines)
+
+    @debug_time
+    def _render(self, node=None, first=0, last=None):
+        node = self.root if node is None else node
+        last = len(self.lines) if last is None else last
+        new_lines = list(node.render(self.style))
+        # new_lines = [
+        #     RenderedLine(self.highlight_search(line), n)
+        #     for line, n in node.render(self.style)
+        # ]
+        self.lines[first : last + 1] = new_lines
+        self.adjust_viewport()
+        return LineSpan(first, first + len(new_lines) - 1)
 
     def adjust_viewport(self) -> None:
         """Scroll the viewport to make sure the focused line is visible."""
@@ -119,10 +158,7 @@ class NodeView:
         start = self.focus if start is None else start
         current = self.lines[start].node
         first, last = self.node_span(start)  # find related old lines
-        new_lines = list(current.render(self.style))  # regenerate new lines
-        self.lines[first : last + 1] = new_lines  # replace
-        self.need_redraw = True
-        return LineSpan(first, first + len(new_lines) - 1)
+        return self._render(current, first, last)
 
     # Actions triggered from input
 
@@ -139,7 +175,7 @@ class NodeView:
         """Move focus to the first/last line of the current (or parent) node.
 
         Jump to the first line representing the current node. If already at the
-        first line, jump to the first line of the parent node. If 'last' is
+        first line, jump to the first line of the parent node. If 'forwards' is
         True, jump to the last line representing the current node (or parent
         node).
         """
@@ -154,6 +190,17 @@ class NodeView:
             target = last if forwards else first
             current = parent
         self.set_focus(target)
+
+    def jump_match(self, *, forwards: bool = False) -> None:
+        """Move focus to the previous/next match for .search."""
+        if forwards:
+            indices = range(self.focus + 1, len(self.lines))
+        else:
+            indices = range(self.focus - 1, -1, -1)
+        for i in indices:
+            if self._matches(i):
+                self.set_focus(i)
+                return
 
     def collapse_current(self) -> None:
         """Collapse the current node.
@@ -245,26 +292,77 @@ class NodeView:
     def rerender_all(self) -> None:
         """Force a full rerender of all visible nodes."""
         self.root.invalidate(recurse=True)
-        self.lines = list(self.root.render(self.style))
-        self.adjust_viewport()
+        self._render()
 
     @debug_time
-    def resize(self, new_width, new_height) -> None:
+    def resize(self, new_width: int, new_height: int) -> None:
         """Resize this tree view to the given dimensions."""
         self.width, self.height = new_width, new_height
         self.style.resize(new_width, new_height)
         self.rerender_all()
 
+    def _highlight_matches(self, line: str) -> str:
+        """Apply search highlight to the given rendered line.
+
+        Return 'line' with its original terminal escapes, as well as with
+        'self.search' styled with black text on yellow background.
+        """
+        # This is largely an exercise in proper handling of terminal escapes.
+        # We must search as if the terminal escapes are not there, but then
+        # prepare the result by combining the existing terminal escapes with
+        # new ones (from the search highlighting).
+        haystack = self.term.strip_seqs(line)
+        assert self.term.length(line) == len(haystack)  # sanity
+        needle = self.search
+
+        def term_escapes_before(index):
+            """Return terminal escapes that occur before 'index' in line."""
+            letters = []
+            escapes = []
+            for fragment in self.term.split_seqs(line):
+                fraglen = self.term.length(fragment)
+                assert fraglen in [0, 1]
+                [escapes, letters][fraglen].append(fragment)
+                if len(letters) > index:
+                    break
+            return "".join(escapes)
+
+        def highlight_needle(match):
+            pre_escapes = term_escapes_before(match.end())
+            substr = match.string[match.start() : match.end()]
+            return self.term.black_on_bright_yellow(substr) + pre_escapes
+
+        def combine_escapes(line1: str, line2: str) -> Iterator[str]:
+            assert self.term.strip_seqs(line1) == self.term.strip_seqs(line2)
+            seq1 = self.term.split_seqs(line1)
+            seq2 = self.term.split_seqs(line2)
+            while seq1 and seq2:
+                if self.term.length(seq1[0]) == 0:  # term escape in line1
+                    yield seq1.pop(0)
+                elif self.term.length(seq2[0]) == 0:  # term escape in line2
+                    yield seq2.pop(0)
+                else:  # letter in both strings
+                    assert seq1[0] == seq2[0]
+                    yield seq1.pop(0)
+                    seq2.pop(0)
+            # Yield remainder of whichever string has escapes left in it
+            yield from seq1
+            yield from seq2
+
+        highlighted = re.sub(needle, highlight_needle, haystack)
+        # Re-combine original terminal escapes from line with the highlights
+        return "".join(combine_escapes(line, highlighted))
+
     @debug_time
-    def draw(self, term: Terminal) -> Iterator[str]:
+    def draw(self):
         """Yield the currently visible lines in this tree view."""
-
-        def highlight(line, variant="on_gray20"):
-            return getattr(term, variant)(term.ljust(line))
-
         first, last = self.visible
+        ret = []
         for i, (line, _) in enumerate(self.lines[first : last + 1], first):
+            if self.search and self._matches(i):
+                line = self._highlight_matches(line)
             if i == self.focus:
-                line = highlight(line)
-            yield line
+                line = self.term.on_gray20(self.term.ljust(line))
+            ret.append(line)
         self.need_redraw = False
+        return ret

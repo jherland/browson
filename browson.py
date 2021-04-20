@@ -23,11 +23,10 @@ class ResizeEvent(Exception):
 class UI:
     def __init__(self, root, term, style):
         self.term = term
-        self.view = NodeView(root, *self.view_size, style)
+        self.view = NodeView(root, term, *self.view_size, style)
         self.input = None
 
         # Misc. state/communication variables
-        self._search = ""  # current search string (empty - no search)
         self._resized = True  # must handle recent window resize
         self._quit = False  # time to quit
         self._status = None  # custom status line
@@ -58,7 +57,7 @@ class UI:
         self.draw_status()
 
     def search(self):
-        self.input = LineInput(self.term, "Search: ", self._search)
+        self.input = LineInput(self.term, "Search: ", self.view.search)
         self._status_color = self.term.bright_yellow
         self.draw_status()
 
@@ -90,6 +89,8 @@ class UI:
             "X": self.view.expand_all,
             # search
             "/": self.search,
+            "n": partial(self.view.jump_match, forwards=True),
+            "p": partial(self.view.jump_match, forwards=False),
             # re-render/re-draw
             "KEY_F5": self.view.rerender_all,
             "\x0c": self.redraw,  # Ctrl+L
@@ -143,26 +144,29 @@ class UI:
         line = self.term.reverse(self.term.ljust(text))
         print(pre + line + post, end="", flush=True)
 
+    @debug_time
+    def draw(self):
+        print(self.term.home + self.term.clear, end="")
+        for line in self.view.draw():
+            print(line)
+        self.draw_status()
+
     # Main UI loop
 
     def run(self):
-        with self.term.fullscreen(), self.term.cbreak():
+        term = self.term
+        with term.fullscreen(), term.cbreak(), term.hidden_cursor():
             with signal_handler(signal.SIGWINCH, self.on_resize):
                 while not self._quit:  # main loop
                     try:
                         if self._resized:
                             self.handle_resize()
                         if self.view.need_redraw:
-                            print(self.term.home + self.term.clear, end="")
-                            for line in self.view.draw(self.term):
-                                print(line)
-                            self.draw_status()
-                        keystroke = self.term.inkey(timeout=self._timeout)
+                            self.draw()
+                        keystroke = term.inkey(timeout=self._timeout)
                         if keystroke and self.input:  # redirect to line input
                             self.input.handle_key(keystroke)()
-                            if self._search != self.input.value:
-                                self._search = self.input.value
-                                # TODO: self.view.need_redraw = True ???
+                            self.view.search = self.input.value
                             self.draw_status()
                             if self.input.done:
                                 self.reset_status()
@@ -184,10 +188,8 @@ class MyStyle(style.TruncateLines, style.SyntaxColor, style.JSONStyle):
 # - We need to _pull_ rendered strings on demand. Too expensive to render
 #   everything up-front.
 # - help window with keymap
-# - search
 # - filter
 # - expand only nodes that match the current search
-# - expand only the focused node (and its parents)
 
 
 def dump(root, style):

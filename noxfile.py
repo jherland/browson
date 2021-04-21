@@ -33,5 +33,5 @@ def lint(session):
 @nox.session(reuse_venv=True)
 def dist(session):
     _install_this_editable(session)
-    session.run("flit publish")
+    session.run("flit", "publish", *session.posargs)
     print("*** Don't forget to tag and push!")

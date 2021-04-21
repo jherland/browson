@@ -5,5 +5,6 @@
 __pycache__/
 
 # Misc.
+/.envrc
 /*.json
 /browson.log
